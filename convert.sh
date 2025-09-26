@@ -16,8 +16,34 @@ mkdir -p output
 CHART=$(helm list -n $NAMESPACE -o json | jq -r ".[] | select(.name==\"$RELEASE\") | .chart")
 REPO_URL=$(helm show chart $CHART 2>/dev/null | grep -E "^home:" | cut -d' ' -f2 | sed 's|/[^/]*$||')
 
+# Get helm values, excluding the USER-SUPPLIED VALUES header
+VALUES=$(helm get values $RELEASE -n $NAMESPACE | grep -v "^USER-SUPPLIED VALUES:$")
+
 # Generate HelmRelease
-cat <<EOF > output/$RELEASE-helmrelease.yaml
+if [ -z "$VALUES" ] || [ "$VALUES" = "null" ]; then
+  # No custom values, generate without values section
+  cat > output/$RELEASE-helmrelease.yaml <<EOF
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: $RELEASE
+  namespace: $NAMESPACE
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: $(echo $CHART | cut -d'-' -f1-2)
+      version: "$(echo $CHART | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$')"
+      sourceRef:
+        kind: HelmRepository
+        name: $RELEASE
+        namespace: flux-system
+  install:
+    createNamespace: true
+EOF
+else
+  # Has custom values, include them
+  cat > output/$RELEASE-helmrelease.yaml <<EOF
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -36,5 +62,6 @@ spec:
   install:
     createNamespace: true
   values:
-$(helm get values $RELEASE -n $NAMESPACE | sed 's/^/    /')
+$(echo "$VALUES" | sed 's/^/    /')
 EOF
+fi
