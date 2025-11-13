@@ -35,53 +35,112 @@ chmod +x convert.sh all.sh
 ### Convert a Single Release
 
 ```bash
-./convert.sh <RELEASE_NAME> <NAMESPACE>
+./convert.sh [OPTIONS] <RELEASE_NAME> <NAMESPACE>
 ```
+
+Options:
+- `--cluster CLUSTER_NAME`: Name of the cluster (default: `my_cluster`)
+- `--output-dir OUTPUT_DIR`: Root output directory (default: `clusters`)
+- `--allow-overwrite`: Allow overwriting existing files (default: disabled)
 
 Example:
 ```bash
 ./convert.sh ingress-nginx ingress-nginx
+./convert.sh --cluster production --output-dir my-gitops ingress-nginx ingress-nginx
 ```
 
 ### Convert All Releases
 
 ```bash
+./all.sh [OPTIONS]
+```
+
+Options:
+- `--cluster CLUSTER_NAME`: Name of the cluster (default: `my_cluster`)
+- `--output-dir OUTPUT_DIR`: Root output directory (default: `clusters`)
+- `--allow-overwrite`: Allow overwriting existing files (default: disabled)
+
+Example:
+```bash
 ./all.sh
+./all.sh --cluster production --output-dir my-gitops
 ```
 
 This will automatically discover and convert all Helm releases across all namespaces.
 
 ## Output Structure
 
-The tool generates a FluxCD-compatible directory structure:
+The tool generates a FluxCD-compatible directory structure following GitOps best practices:
 
 ```
-output/
-├── infrastructure/
-│   ├── sources/
-│   │   └── helm/
-│   │       ├── ingress-nginx-repository.yaml
-│   │       └── cert-manager-repository.yaml
-│   └── controllers/
-│       ├── ingress-nginx/
-│       │   └── helmrelease.yaml
-│       └── cert-manager/
-│           └── helmrelease.yaml
-└── apps/
-    └── <app-namespace>/
-        └── <app-name>/
-            └── helmrelease.yaml
+clusters/
+├── my_cluster/                          # Cluster-specific Kustomizations
+│   ├── infrastructure/
+│   │   ├── sources.yaml                 # Kustomization for HelmRepository sources
+│   │   ├── ingress-nginx.yaml           # Kustomization for ingress-nginx
+│   │   └── cert-manager.yaml            # Kustomization for cert-manager
+│   └── apps/
+│       ├── myapp.yaml                   # Kustomization for myapp
+│       └── another-app.yaml             # Kustomization for another-app
+└── resources/
+    └── my_cluster/
+        ├── infrastructure/
+        │   ├── sources/
+        │   │   ├── ingress-nginx.yaml   # HelmRepository resource
+        │   │   └── cert-manager.yaml    # HelmRepository resource
+        │   ├── ingress-nginx/
+        │   │   └── helm.yaml             # HelmRelease for ingress-nginx
+        │   └── cert-manager/
+        │       └── helm.yaml             # HelmRelease for cert-manager
+        └── apps/
+            ├── myapp/
+            │   └── helm.yaml             # HelmRelease for myapp
+            └── another-app/
+                └── helm.yaml             # HelmRelease for another-app
 ```
 
 ### Directory Organization
 
-- **infrastructure/sources/helm/**: HelmRepository resources defining Helm chart repositories
-- **infrastructure/controllers/**: System-level controllers (ingress, cert-manager, monitoring, etc.)
-- **apps/**: Application-specific HelmReleases organized by namespace
+- **`clusters/<cluster>/`**: Contains Kustomization resources that FluxCD monitors
+  - **`infrastructure/`**: Kustomizations for infrastructure components
+  - **`apps/`**: Kustomizations for applications
+
+- **`clusters/resources/<cluster>/`**: Contains the actual Kubernetes manifests
+  - **`infrastructure/sources/`**: HelmRepository resources defining Helm chart repositories
+  - **`infrastructure/<name>/`**: Infrastructure component HelmReleases (ingress, cert-manager, monitoring, etc.)
+  - **`apps/<name>/`**: Application-specific HelmReleases
+
+Each Kustomization in `clusters/<cluster>/` points to its corresponding resources in `clusters/resources/<cluster>/` via the `path` specification.
 
 ## Generated Resources
 
+### Kustomization Example
+
+Each release gets a Kustomization that tells FluxCD where to find its resources:
+
+```yaml
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ingress-nginx
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: secrets
+  interval: 3m
+  retryInterval: 2m
+  timeout: 5m
+  wait: true
+  path: "./clusters/resources/my_cluster/infrastructure/ingress-nginx"
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+```
+
 ### HelmRelease Example
+
+Located at `clusters/resources/<cluster>/<type>/<name>/helm.yaml`:
 
 ```yaml
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -101,6 +160,18 @@ spec:
         namespace: flux-system
   install:
     createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  test:
+    enable: true
+  rollback:
+    timeout: 10m
+    recreate: true
+    cleanupOnFail: true
   values:
     controller:
       service:
@@ -109,6 +180,8 @@ spec:
 ```
 
 ### HelmRepository Example
+
+Located at `clusters/resources/<cluster>/infrastructure/sources/<name>.yaml`:
 
 ```yaml
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -121,6 +194,27 @@ spec:
   url: https://kubernetes.github.io/ingress-nginx
 ```
 
+### Sources Kustomization
+
+A special Kustomization is created for HelmRepository sources:
+
+```yaml
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: sources
+  namespace: flux-system
+spec:
+  interval: 3m
+  retryInterval: 2m
+  wait: true
+  path: "./clusters/resources/my_cluster/infrastructure/sources"
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+```
+
 ## Integration with FluxCD
 
 After generating the manifests:
@@ -129,13 +223,21 @@ After generating the manifests:
 
 2. **Commit to Git Repository**:
    ```bash
-   cp -r output/* /path/to/your-flux-repo/clusters/production/
-   git add .
+   # If you generated directly in your GitOps repo
+   cd /path/to/your-flux-repo
+   git add clusters/
+   git commit -m "Migrate Helm releases to FluxCD"
+   git push
+
+   # Or if you need to copy from a separate output directory
+   cp -r clusters/* /path/to/your-flux-repo/clusters/
+   cd /path/to/your-flux-repo
+   git add clusters/
    git commit -m "Migrate Helm releases to FluxCD"
    git push
    ```
 
-3. **Configure Flux to Monitor the Repository**:
+3. **Configure Flux to Monitor the Repository** (if not already done):
    ```bash
    flux create source git flux-system \
      --url=https://github.com/yourusername/your-flux-repo \
@@ -143,11 +245,23 @@ After generating the manifests:
      --interval=1m
    ```
 
-4. **Apply Kustomization**:
+4. **Apply Kustomizations**:
    ```bash
-   flux create kustomization infrastructure \
+   # Apply the sources Kustomization first (HelmRepository resources)
+   kubectl apply -f clusters/my_cluster/infrastructure/sources.yaml
+
+   # Apply infrastructure Kustomizations
+   kubectl apply -f clusters/my_cluster/infrastructure/
+
+   # Apply application Kustomizations
+   kubectl apply -f clusters/my_cluster/apps/
+   ```
+
+   Alternatively, you can create a root Kustomization that watches the cluster directory:
+   ```bash
+   flux create kustomization cluster \
      --source=flux-system \
-     --path="./clusters/production/infrastructure" \
+     --path="./clusters/my_cluster" \
      --prune=true \
      --interval=10m
    ```
@@ -157,19 +271,50 @@ After generating the manifests:
 ### Recommended Approach
 
 1. **Test in Development**: Run the migration in a development cluster first
-2. **Gradual Migration**: Migrate one release at a time in production
-3. **Verify State**: Ensure FluxCD successfully reconciles each release
-4. **Clean Up**: Once verified, remove the original Helm releases:
+   ```bash
+   ./all.sh --cluster dev
+   ```
+
+2. **Gradual Migration**: For production, migrate one release at a time
+   ```bash
+   ./convert.sh --cluster production ingress-nginx ingress-nginx
+   ```
+
+3. **Review Generated Files**: Check the Kustomizations and HelmReleases before committing
+   ```bash
+   # Review the generated structure
+   tree clusters/
+   # Review individual files
+   cat clusters/production/infrastructure/ingress-nginx.yaml
+   cat clusters/resources/production/infrastructure/ingress-nginx/helm.yaml
+   ```
+
+4. **Commit and Push**: Add to your GitOps repository
+   ```bash
+   git add clusters/
+   git commit -m "Add ingress-nginx FluxCD configuration"
+   git push
+   ```
+
+5. **Verify State**: Ensure FluxCD successfully reconciles each release
+   ```bash
+   flux get kustomizations
+   flux get helmreleases -A
+   ```
+
+6. **Clean Up**: Once verified, remove the original Helm releases
    ```bash
    helm uninstall <RELEASE_NAME> -n <NAMESPACE>
    ```
 
 ### Important Considerations
 
-- FluxCD will take over management of the resources
-- Ensure no conflicting operators or controllers are managing the same resources
-- Back up your cluster state before migration
-- Review and adjust the generated `interval` values based on your needs
+- **Overwrite Protection**: By default, the tool won't overwrite existing files. Use `--allow-overwrite` to force updates
+- **FluxCD Takeover**: FluxCD will adopt and manage existing resources without recreating them
+- **No Downtime**: The migration process is designed to be seamless with no service interruption
+- **Dependencies**: The generated Kustomizations include a `dependsOn` for secrets - adjust as needed
+- **Backup**: Back up your cluster state before migration
+- **Review**: Always review and adjust the generated configurations based on your needs
 
 ## Troubleshooting
 
