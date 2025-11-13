@@ -70,13 +70,9 @@ fi
 
 # Define directory structure (using RELEASE for now, will update after detecting FluxCD name)
 KUSTOMIZATION_DIR="$OUTPUT_ROOT/$CLUSTER_NAME/$RESOURCE_TYPE"
-SOURCES_KUSTOMIZATION_DIR="$OUTPUT_ROOT/$CLUSTER_NAME/infrastructure"
-SOURCES_RESOURCE_DIR="$OUTPUT_ROOT/resources/$CLUSTER_NAME/infrastructure/sources"
 
 # Create output directories (RESOURCE_DIR will be created later after we know the final name)
 mkdir -p "$KUSTOMIZATION_DIR"
-mkdir -p "$SOURCES_KUSTOMIZATION_DIR"
-mkdir -p "$SOURCES_RESOURCE_DIR"
 
 echo "Processing $RELEASE in namespace $NAMESPACE..."
 echo "  Type: $RESOURCE_TYPE"
@@ -225,60 +221,19 @@ check_file_exists() {
     return 1  # File doesn't exist or overwrite allowed
 }
 
-# Generate HelmRepository resource if we have a URL
-if [ ! -z "$REPO_URL" ] && [ "$REPO_URL" != "UNKNOWN" ]; then
-    HELM_REPO_FILE="$SOURCES_RESOURCE_DIR/$REPO_NAME.yaml"
+# Determine the namespace for the HelmRepository
+# Use the same namespace as the HelmRelease (not FluxCD's namespace)
+HELM_REPO_NAMESPACE="$NAMESPACE"
 
-    # Determine the namespace for the HelmRepository
-    # Use FluxCD's namespace if available, otherwise default to flux-system
-    HELM_REPO_NAMESPACE="flux-system"
-    if [ ! -z "$FLUXCD_REPO_NAMESPACE" ] && [ "$FLUXCD_REPO_NAMESPACE" != "null" ]; then
-        HELM_REPO_NAMESPACE="$FLUXCD_REPO_NAMESPACE"
-    fi
-
-    if ! check_file_exists "$HELM_REPO_FILE"; then
-        cat > "$HELM_REPO_FILE" <<EOF
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
-metadata:
-  name: $REPO_NAME
-  namespace: $HELM_REPO_NAMESPACE
-spec:
-  interval: 30m
-  url: $REPO_URL
-EOF
-        echo "  Created HelmRepository: $HELM_REPO_FILE"
-
-        # Create sources Kustomization if it doesn't exist
-        SOURCES_KUSTOMIZATION_FILE="$SOURCES_KUSTOMIZATION_DIR/sources.yaml"
-        if ! check_file_exists "$SOURCES_KUSTOMIZATION_FILE"; then
-            cat > "$SOURCES_KUSTOMIZATION_FILE" <<EOF
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: sources
-  namespace: flux-system
-spec:
-  interval: 3m
-  retryInterval: 2m
-  wait: true
-  path: "./clusters/resources/$CLUSTER_NAME/infrastructure/sources"
-  prune: true
-  sourceRef:
-    kind: GitRepository
-    name: flux-system
-EOF
-            echo "  Created sources Kustomization: $SOURCES_KUSTOMIZATION_FILE"
-        fi
-    fi
-elif [ "$REPO_URL" = "UNKNOWN" ]; then
+# We'll add the HelmRepository to the helm.yaml file directly, so just prepare the variables
+if [ "$REPO_URL" = "UNKNOWN" ]; then
     echo "  Warning: Could not determine repository URL for $RELEASE. HelmRelease will have UNKNOWN sourceRef."
     REPO_NAME="UNKNOWN"
-    HELM_REPO_NAMESPACE="flux-system"
-else
+elif [ -z "$REPO_URL" ]; then
     echo "  Warning: Could not determine repository URL for $RELEASE. You'll need to create the HelmRepository manually."
     REPO_NAME="${HELMRELEASE_NAME}-repo"  # Use a placeholder name
-    HELM_REPO_NAMESPACE="flux-system"
+else
+    echo "  Repository: $REPO_NAME in namespace $HELM_REPO_NAMESPACE"
 fi
 
 # Get helm values, excluding the USER-SUPPLIED VALUES header
@@ -519,7 +474,17 @@ spec:
     enable: true
 EOF
   else
+    # Include HelmRepository at the top of the file
     cat > "$HELM_RELEASE_FILE" <<EOF
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: $REPO_NAME
+  namespace: $HELM_REPO_NAMESPACE
+spec:
+  interval: 30m
+  url: $REPO_URL
+---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -581,7 +546,17 @@ spec:
 $(echo "$VALUES" | sed 's/^/    /')
 EOF
   else
+    # Include HelmRepository at the top of the file
     cat > "$HELM_RELEASE_FILE" <<EOF
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: $REPO_NAME
+  namespace: $HELM_REPO_NAMESPACE
+spec:
+  interval: 30m
+  url: $REPO_URL
+---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -613,10 +588,70 @@ EOF
   echo "  Created HelmRelease: $HELM_RELEASE_FILE"
 fi
 
+# If repository is UNKNOWN, extract all manifests as individual files in the resource folder
+if [ "$REPO_NAME" = "UNKNOWN" ]; then
+    echo ""
+    echo "  Extracting manifests as individual files (repository unknown)..."
+
+    # Get the manifest and split into separate files directly in RESOURCE_DIR
+    helm get manifest "$RELEASE" -n "$NAMESPACE" > "$RESOURCE_DIR/all-manifests.yaml" 2>/dev/null
+
+    if [ -f "$RESOURCE_DIR/all-manifests.yaml" ] && [ -s "$RESOURCE_DIR/all-manifests.yaml" ]; then
+        # Split manifests using a simple shell loop
+        resource_num=1
+        current_file=""
+        while IFS= read -r line || [ -n "$line" ]; do
+            if [ "$line" = "---" ]; then
+                if [ ! -z "$current_file" ]; then
+                    resource_num=$((resource_num + 1))
+                fi
+                current_file="$RESOURCE_DIR/resource-$(printf '%03d' $resource_num).yaml"
+                continue
+            fi
+            if [ ! -z "$current_file" ]; then
+                echo "$line" >> "$current_file"
+            fi
+        done < "$RESOURCE_DIR/all-manifests.yaml"
+
+        # Remove the combined file
+        rm -f "$RESOURCE_DIR/all-manifests.yaml"
+
+        # Remove empty files
+        find "$RESOURCE_DIR" -type f -size 0 -delete 2>/dev/null || true
+
+        # Rename files based on their content (kind and name)
+        for file in "$RESOURCE_DIR"/resource-*.yaml; do
+            if [ -f "$file" ]; then
+                # Extract kind and name from the YAML
+                KIND=$(grep -m 1 "^kind:" "$file" | awk '{print tolower($2)}' | tr -d '\r' | tr -d '\n')
+                NAME=$(grep -m 1 "^  name:" "$file" | awk '{print $2}' | tr -d '\r' | tr -d '\n')
+
+                if [ ! -z "$KIND" ] && [ ! -z "$NAME" ]; then
+                    NEW_NAME="$RESOURCE_DIR/${KIND}-${NAME}.yaml"
+                    mv "$file" "$NEW_NAME" 2>/dev/null || true
+                    echo "    Extracted: ${KIND}-${NAME}.yaml"
+                fi
+            fi
+        done
+
+        # Clean up any remaining numbered files
+        rm -f "$RESOURCE_DIR"/resource-*.yaml 2>/dev/null || true
+
+        MANIFEST_COUNT=$(find "$RESOURCE_DIR" -type f -name "*.yaml" ! -name "helm.yaml" | wc -l | tr -d ' ')
+        if [ "$MANIFEST_COUNT" -gt 0 ]; then
+            echo "  Extracted $MANIFEST_COUNT manifest file(s) to resource folder"
+        else
+            echo "  Warning: No manifests were extracted"
+        fi
+    else
+        echo "  Warning: Could not extract manifests (no manifest data)"
+    fi
+fi
+
 echo ""
 echo "Conversion complete for $RELEASE!"
 echo "  Kustomization: $KUSTOMIZATION_FILE"
 echo "  HelmRelease: $HELM_RELEASE_FILE"
-if [ ! -z "$REPO_URL" ]; then
-    echo "  HelmRepository: $HELM_REPO_FILE"
+if [ "$REPO_NAME" = "UNKNOWN" ]; then
+    echo "  Note: Manifests extracted to resource folder (repository unknown)"
 fi
