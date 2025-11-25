@@ -557,6 +557,20 @@ EOF
   echo "  Created HelmRelease: $HELM_RELEASE_FILE"
 fi
 
+# Generate Namespace file
+NAMESPACE_FILE="$RESOURCE_DIR/namespace.yaml"
+if ! check_file_exists "$NAMESPACE_FILE"; then
+    cat > "$NAMESPACE_FILE" <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    kubernetes.io/metadata.name: $NAMESPACE
+  name: $NAMESPACE
+EOF
+    echo "  Created Namespace: $NAMESPACE_FILE"
+fi
+
 # If repository is UNKNOWN, extract all manifests as individual files in the resource folder
 if [ "$REPO_NAME" = "UNKNOWN" ]; then
     echo ""
