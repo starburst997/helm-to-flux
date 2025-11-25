@@ -332,6 +332,10 @@ else
                         else
                             echo "  Found custom values that differ from defaults - including only differences"
                         fi
+                        # Filter out */managed-by keys
+                        if [ ! -z "$VALUES" ]; then
+                            VALUES=$(echo "$VALUES" | yq eval 'del(.. | select(has("managed-by")).managed-by)' 2>/dev/null || echo "$VALUES")
+                        fi
                     fi
                 else
                     VALUES=""
@@ -340,6 +344,10 @@ else
             else
                 echo "  Warning: Could not fetch default values for comparison, including all user values"
                 VALUES="$USER_VALUES"
+                # Filter out */managed-by keys
+                if [ ! -z "$VALUES" ]; then
+                    VALUES=$(echo "$VALUES" | yq eval 'del(.. | select(has("managed-by")).managed-by)' 2>/dev/null || echo "$VALUES")
+                fi
             fi
 
             # Cleanup
@@ -350,6 +358,10 @@ else
         # Can't compare without repo info, include all user values
         echo "  Warning: Cannot compare with defaults (no repository info), including all user values"
         VALUES="$USER_VALUES"
+        # Filter out */managed-by keys
+        if [ ! -z "$VALUES" ]; then
+            VALUES=$(echo "$VALUES" | yq eval 'del(.. | select(has("managed-by")).managed-by)' 2>/dev/null || echo "$VALUES")
+        fi
     fi
 fi
 
