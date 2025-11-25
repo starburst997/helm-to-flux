@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Helm to Flux Migrator - Migrate Helm Releases to FluxCD</title>
+    <meta
+      name="description"
+      content="A streamlined tool to migrate existing Helm releases from Kubernetes clusters to FluxCD GitOps-managed HelmReleases."
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        line-height: 1.6;
+        color: #d0d0d9;
+        background: #0c1018;
+        min-height: 100vh;
+      }
+
+      .hero-background {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 100vh;
+        background: linear-gradient(135deg, #0c1018 0%, #191923 100%);
+        z-index: -1;
+      }
+
+      .hero-accent {
+        position: absolute;
+        width: 600px;
+        height: 600px;
+        background: radial-gradient(circle, #61afff20 0%, transparent 70%);
+        top: -300px;
+        left: 50%;
+        transform: translateX(-50%);
+        pointer-events: none;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+
+      header {
+        padding: 2rem 0;
+        text-align: center;
+      }
+
+      .hero {
+        padding: 4rem 0 6rem;
+        text-align: center;
+      }
+
+      h1 {
+        font-size: 3.5rem;
+        font-weight: 700;
+        margin-bottom: 1.5rem;
+        background: linear-gradient(to right, #61afff, #98d280);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .tagline {
+        font-size: 1.5rem;
+        margin-bottom: 2rem;
+        color: #96969d;
+        max-width: 700px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .cta-buttons {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin-top: 2rem;
+      }
+
+      .btn {
+        display: inline-block;
+        padding: 0.875rem 2rem;
+        border-radius: 8px;
+        text-decoration: none;
+        font-weight: 600;
+        transition: all 0.3s ease;
+        font-size: 1.1rem;
+      }
+
+      .btn-primary {
+        background: #61afff;
+        color: #0c1018;
+        border: 1px solid #61afff;
+      }
+
+      .btn-primary:hover {
+        background: #7abfff;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 30px rgba(97, 175, 255, 0.3);
+      }
+
+      .btn-secondary {
+        background: transparent;
+        color: #d0d0d9;
+        border: 2px solid #3f3f3f;
+      }
+
+      .btn-secondary:hover {
+        background: #32373c;
+        border-color: #636669;
+      }
+
+      .features-section {
+        background: #141518;
+        border-top: 1px solid #3f3f3f;
+        border-bottom: 1px solid #3f3f3f;
+        padding: 5rem 0;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 2rem;
+        margin-top: 3rem;
+      }
+
+      .feature {
+        text-align: center;
+        padding: 1.5rem;
+      }
+
+      .feature-icon {
+        width: 60px;
+        height: 60px;
+        background: #32373c;
+        border: 1px solid #3f3f3f;
+        border-radius: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 1.5rem;
+        font-size: 1.8rem;
+      }
+
+      .feature h3 {
+        font-size: 1.2rem;
+        margin-bottom: 1rem;
+        color: #61afff;
+      }
+
+      .feature p {
+        color: #96969d;
+        line-height: 1.7;
+        font-size: 0.95rem;
+      }
+
+      .section-title {
+        text-align: center;
+        font-size: 2.5rem;
+        color: #d0d0d9;
+        margin-bottom: 1rem;
+      }
+
+      .section-subtitle {
+        text-align: center;
+        color: #96969d;
+        font-size: 1.2rem;
+        max-width: 600px;
+        margin: 0 auto;
+      }
+
+      .usage-section {
+        padding: 5rem 0;
+        background: #0c1018;
+      }
+
+      .code-block {
+        background: #141518;
+        border: 1px solid #3f3f3f;
+        border-radius: 10px;
+        padding: 2rem;
+        margin: 2rem auto;
+        max-width: 900px;
+        overflow-x: auto;
+      }
+
+      .code-block pre {
+        font-family: "Monaco", "Courier New", monospace;
+        font-size: 0.9rem;
+        color: #d0d0d9;
+        line-height: 1.6;
+      }
+
+      .code-block-title {
+        font-size: 1.1rem;
+        color: #98d280;
+        margin-bottom: 1rem;
+        font-weight: 600;
+      }
+
+      /* Syntax highlighting */
+      .comment {
+        color: #636669;
+        font-style: italic;
+      }
+
+      .command {
+        color: #98d280;
+      }
+
+      .flag {
+        color: #61afff;
+      }
+
+      .arg {
+        color: #ffe169;
+      }
+
+      .string {
+        color: #e18cf5;
+      }
+
+      .yaml-key {
+        color: #61afff;
+      }
+
+      .yaml-string {
+        color: #98d280;
+      }
+
+      .yaml-value {
+        color: #ffe169;
+      }
+
+      .yaml-comment {
+        color: #636669;
+        font-style: italic;
+      }
+
+      .structure-section {
+        padding: 5rem 0;
+        background: #141518;
+        border-top: 1px solid #3f3f3f;
+        border-bottom: 1px solid #3f3f3f;
+      }
+
+      .structure-block {
+        background: #0c1018;
+        border: 1px solid #3f3f3f;
+        border-radius: 10px;
+        padding: 2rem;
+        margin: 2rem auto;
+        max-width: 700px;
+        overflow-x: auto;
+      }
+
+      .structure-block pre {
+        font-family: "Monaco", "Courier New", monospace;
+        font-size: 0.9rem;
+        color: #d0d0d9;
+        line-height: 1.8;
+      }
+
+      .folder {
+        color: #61afff;
+      }
+
+      .file {
+        color: #98d280;
+      }
+
+      .note {
+        color: #636669;
+      }
+
+      .reference-section {
+        background: #0c1018;
+        padding: 5rem 0;
+      }
+
+      .reference-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+        gap: 2rem;
+        margin-top: 2rem;
+      }
+
+      .reference-card {
+        background: #141518;
+        border: 1px solid #3f3f3f;
+        border-radius: 10px;
+        padding: 2rem;
+      }
+
+      .reference-card h3 {
+        font-size: 1.5rem;
+        margin-bottom: 1.5rem;
+        color: #61afff;
+        border-bottom: 3px solid #61afff;
+        padding-bottom: 0.5rem;
+      }
+
+      .param-item {
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #3f3f3f;
+      }
+
+      .param-item:last-child {
+        border-bottom: none;
+      }
+
+      .param-name {
+        font-family: "Monaco", monospace;
+        font-size: 0.95rem;
+        color: #98d280;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+      }
+
+      .param-desc {
+        font-size: 0.9rem;
+        color: #d0d0d9;
+        margin-bottom: 0.25rem;
+      }
+
+      .param-default {
+        font-size: 0.85rem;
+        color: #96969d;
+        font-style: italic;
+      }
+
+      .workflow-section {
+        padding: 5rem 0;
+        background: #141518;
+        border-top: 1px solid #3f3f3f;
+      }
+
+      .workflow-steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 2rem;
+        margin-top: 3rem;
+      }
+
+      .workflow-step {
+        background: #0c1018;
+        border: 1px solid #3f3f3f;
+        border-radius: 10px;
+        padding: 2rem;
+        position: relative;
+      }
+
+      .step-number {
+        position: absolute;
+        top: -15px;
+        left: 20px;
+        background: #61afff;
+        color: #0c1018;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 0.9rem;
+      }
+
+      .workflow-step h4 {
+        color: #d0d0d9;
+        margin-bottom: 0.75rem;
+        font-size: 1.1rem;
+      }
+
+      .workflow-step p {
+        color: #96969d;
+        font-size: 0.9rem;
+        line-height: 1.6;
+      }
+
+      .workflow-step code {
+        background: #32373c;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-family: "Monaco", monospace;
+        font-size: 0.85rem;
+        color: #98d280;
+      }
+
+      footer {
+        background: #0c1018;
+        padding: 3rem 0;
+        text-align: center;
+        color: #96969d;
+        border-top: 1px solid #3f3f3f;
+      }
+
+      footer a {
+        color: #61afff;
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      footer a:hover {
+        color: #98d280;
+        text-decoration: underline;
+      }
+
+      .footer-links {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+      }
+
+      .prereq-section {
+        padding: 4rem 0;
+        background: #0c1018;
+      }
+
+      .prereq-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1.5rem;
+        margin-top: 2rem;
+        max-width: 900px;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .prereq-item {
+        background: #141518;
+        border: 1px solid #3f3f3f;
+        border-radius: 8px;
+        padding: 1.25rem;
+        text-align: center;
+      }
+
+      .prereq-item code {
+        color: #98d280;
+        font-family: "Monaco", monospace;
+        font-size: 1rem;
+      }
+
+      .prereq-item p {
+        color: #96969d;
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+      }
+
+      .optional-badge {
+        display: inline-block;
+        background: #3f3f3f;
+        color: #96969d;
+        padding: 0.15rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        margin-left: 0.5rem;
+        vertical-align: middle;
+      }
+
+      @media (max-width: 992px) {
+        .features {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      @media (max-width: 768px) {
+        h1 {
+          font-size: 2.5rem;
+        }
+
+        .tagline {
+          font-size: 1.2rem;
+        }
+
+        .features {
+          grid-template-columns: 1fr;
+          gap: 2rem;
+        }
+
+        .cta-buttons {
+          flex-direction: column;
+        }
+
+        .section-title {
+          font-size: 2rem;
+        }
+
+        .code-block {
+          padding: 1.5rem;
+        }
+
+        .code-block pre {
+          font-size: 0.8rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="hero-background">
+      <div class="hero-accent"></div>
+    </div>
+
+    <header>
+      <div class="container">
+        <nav>
+          <a
+            href="https://github.com/starburst997/helm-to-flux"
+            class="btn btn-secondary"
+          >
+            View on GitHub &rarr;
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="container">
+        <h1>Helm to Flux Migrator</h1>
+        <p class="tagline">
+          Seamlessly migrate your Helm releases to FluxCD GitOps-managed
+          HelmReleases. Extract, convert, and deploy with confidence.
+        </p>
+        <div class="cta-buttons">
+          <a
+            href="https://github.com/starburst997/helm-to-flux"
+            class="btn btn-primary"
+          >
+            Get Started
+          </a>
+          <a
+            href="https://github.com/starburst997/helm-to-flux#readme"
+            class="btn btn-secondary"
+          >
+            Documentation
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="features-section">
+      <div class="container">
+        <h2 class="section-title">Streamlined GitOps Migration</h2>
+        <p class="section-subtitle">
+          Transition from traditional Helm deployments to FluxCD with automated
+          tooling
+        </p>
+
+        <div class="features">
+          <div class="feature">
+            <div class="feature-icon">&#128260;</div>
+            <h3>Automatic Conversion</h3>
+            <p>
+              Extracts all Helm releases and converts them to FluxCD
+              HelmRelease format automatically.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="feature-icon">&#128193;</div>
+            <h3>Best Practice Structure</h3>
+            <p>
+              Generates output following FluxCD's recommended directory
+              structure with Kustomizations.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="feature-icon">&#129302;</div>
+            <h3>AI-Powered Detection</h3>
+            <p>
+              Uses Claude AI to find official Helm chart repositories when not
+              detected from FluxCD.
+            </p>
+          </div>
+
+          <div class="feature">
+            <div class="feature-icon">&#128200;</div>
+            <h3>Export &amp; Compare</h3>
+            <p>
+              Export manifests and compare deployments before/after changes for
+              validation.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="usage-section">
+      <div class="container">
+        <h2 class="section-title">Quick Start</h2>
+        <p class="section-subtitle">
+          Get up and running in minutes with simple commands
+        </p>
+
+        <div class="code-block">
+          <div class="code-block-title">Installation</div>
+          <pre><span class="command">git clone</span> <span class="string">https://github.com/starburst997/helm-to-flux</span>
+<span class="command">cd</span> <span class="arg">helm-to-flux</span>
+<span class="command">chmod</span> <span class="flag">+x</span> <span class="arg">*.sh</span></pre>
+        </div>
+
+        <div class="code-block">
+          <div class="code-block-title">Convert a Single Release</div>
+          <pre><span class="comment"># Basic usage</span>
+<span class="command">./convert.sh</span> <span class="arg">ingress-nginx</span> <span class="arg">ingress-nginx</span>
+
+<span class="comment"># With cluster and output directory</span>
+<span class="command">./convert.sh</span> <span class="flag">--cluster</span> <span class="arg">production</span> <span class="flag">--output-dir</span> <span class="arg">my-gitops</span> <span class="arg">ingress-nginx</span> <span class="arg">ingress-nginx</span></pre>
+        </div>
+
+        <div class="code-block">
+          <div class="code-block-title">Convert All Releases</div>
+          <pre><span class="comment"># Discover and convert all Helm releases across all namespaces</span>
+<span class="command">./all.sh</span>
+
+<span class="comment"># Specify cluster name for production</span>
+<span class="command">./all.sh</span> <span class="flag">--cluster</span> <span class="arg">production</span> <span class="flag">--output-dir</span> <span class="arg">my-gitops</span></pre>
+        </div>
+
+        <div class="code-block">
+          <div class="code-block-title">Export &amp; Compare Manifests</div>
+          <pre><span class="comment"># Export current state</span>
+<span class="command">./export-all.sh</span> <span class="arg">export-before</span>
+
+<span class="comment"># Make changes to your cluster...</span>
+
+<span class="comment"># Export new state and compare</span>
+<span class="command">./export-all.sh</span> <span class="arg">export-after</span>
+<span class="command">./compare-exports.sh</span> <span class="arg">export-before</span> <span class="arg">export-after</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="structure-section">
+      <div class="container">
+        <h2 class="section-title">Output Structure</h2>
+        <p class="section-subtitle">
+          FluxCD-compatible directory layout following GitOps best practices
+        </p>
+
+        <div class="structure-block">
+          <pre><span class="folder">clusters/</span>
+<span class="folder">&#9500;&#9472;&#9472; my_cluster/</span>                     <span class="note"># Cluster-specific Kustomizations</span>
+<span class="folder">&#9474;   &#9500;&#9472;&#9472; infrastructure/</span>
+<span class="file">&#9474;   &#9474;   &#9500;&#9472;&#9472; ingress-nginx.yaml</span>     <span class="note"># Kustomization</span>
+<span class="file">&#9474;   &#9474;   &#9492;&#9472;&#9472; cert-manager.yaml</span>
+<span class="folder">&#9474;   &#9492;&#9472;&#9472; apps/</span>
+<span class="file">&#9474;       &#9500;&#9472;&#9472; myapp.yaml</span>
+<span class="file">&#9474;       &#9492;&#9472;&#9472; another-app.yaml</span>
+<span class="folder">&#9492;&#9472;&#9472; resources/</span>
+    <span class="folder">&#9492;&#9472;&#9472; my_cluster/</span>
+        <span class="folder">&#9500;&#9472;&#9472; infrastructure/</span>
+        <span class="folder">&#9474;   &#9500;&#9472;&#9472; ingress-nginx/</span>
+        <span class="file">&#9474;   &#9474;   &#9492;&#9472;&#9472; helm.yaml</span>          <span class="note"># HelmRepo + HelmRelease</span>
+        <span class="folder">&#9474;   &#9492;&#9472;&#9472; cert-manager/</span>
+        <span class="file">&#9474;       &#9492;&#9472;&#9472; helm.yaml</span>
+        <span class="folder">&#9492;&#9472;&#9472; apps/</span>
+            <span class="folder">&#9500;&#9472;&#9472; myapp/</span>
+            <span class="file">&#9474;   &#9492;&#9472;&#9472; helm.yaml</span>
+            <span class="folder">&#9492;&#9472;&#9472; another-app/</span>
+                <span class="file">&#9492;&#9472;&#9472; helm.yaml</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="reference-section">
+      <div class="container">
+        <h2 class="section-title">Command Reference</h2>
+        <p class="section-subtitle">Complete options for all scripts</p>
+
+        <div class="reference-grid">
+          <div class="reference-card">
+            <h3>convert.sh</h3>
+            <div class="param-item">
+              <div class="param-name">--cluster CLUSTER_NAME</div>
+              <div class="param-desc">Name of the target cluster</div>
+              <div class="param-default">Default: my_cluster</div>
+            </div>
+            <div class="param-item">
+              <div class="param-name">--output-dir OUTPUT_DIR</div>
+              <div class="param-desc">Root output directory</div>
+              <div class="param-default">Default: clusters</div>
+            </div>
+            <div class="param-item">
+              <div class="param-name">--allow-overwrite</div>
+              <div class="param-desc">Allow overwriting existing files</div>
+              <div class="param-default">Default: disabled</div>
+            </div>
+            <div class="param-item">
+              <div class="param-name">&lt;RELEASE&gt; &lt;NAMESPACE&gt;</div>
+              <div class="param-desc">
+                Helm release name and Kubernetes namespace (required)
+              </div>
+            </div>
+          </div>
+
+          <div class="reference-card">
+            <h3>all.sh</h3>
+            <div class="param-item">
+              <div class="param-name">--cluster CLUSTER_NAME</div>
+              <div class="param-desc">Name of the target cluster</div>
+              <div class="param-default">Default: my_cluster</div>
+            </div>
+            <div class="param-item">
+              <div class="param-name">--output-dir OUTPUT_DIR</div>
+              <div class="param-desc">Root output directory</div>
+              <div class="param-default">Default: clusters</div>
+            </div>
+            <div class="param-item">
+              <div class="param-name">--allow-overwrite</div>
+              <div class="param-desc">Allow overwriting existing files</div>
+              <div class="param-default">Default: disabled</div>
+            </div>
+          </div>
+
+          <div class="reference-card">
+            <h3>export-all.sh</h3>
+            <div class="param-item">
+              <div class="param-name">[OUTPUT_DIR]</div>
+              <div class="param-desc">
+                Output directory for exported manifests
+              </div>
+              <div class="param-default">Default: export</div>
+            </div>
+          </div>
+
+          <div class="reference-card">
+            <h3>compare-exports.sh</h3>
+            <div class="param-item">
+              <div class="param-name">&lt;EXPORT_DIR_1&gt;</div>
+              <div class="param-desc">First export directory (required)</div>
+            </div>
+            <div class="param-item">
+              <div class="param-name">&lt;EXPORT_DIR_2&gt;</div>
+              <div class="param-desc">Second export directory (required)</div>
+            </div>
+            <div class="param-item">
+              <div class="param-desc" style="margin-top: 0.5rem">
+                Returns exit code 0 if identical, 1 if different
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="workflow-section">
+      <div class="container">
+        <h2 class="section-title">Migration Workflow</h2>
+        <p class="section-subtitle">
+          Recommended approach for a seamless transition
+        </p>
+
+        <div class="workflow-steps">
+          <div class="workflow-step">
+            <div class="step-number">1</div>
+            <h4>Test in Development</h4>
+            <p>
+              Run the migration in a dev cluster first using
+              <code>./all.sh --cluster dev</code>
+            </p>
+          </div>
+
+          <div class="workflow-step">
+            <div class="step-number">2</div>
+            <h4>Review Generated Files</h4>
+            <p>
+              Inspect Kustomizations and HelmReleases before committing to
+              ensure correctness.
+            </p>
+          </div>
+
+          <div class="workflow-step">
+            <div class="step-number">3</div>
+            <h4>Gradual Production Migration</h4>
+            <p>
+              Migrate one release at a time in production using
+              <code>./convert.sh</code>
+            </p>
+          </div>
+
+          <div class="workflow-step">
+            <div class="step-number">4</div>
+            <h4>Commit &amp; Push</h4>
+            <p>
+              Add generated files to your GitOps repository and push to trigger
+              FluxCD reconciliation.
+            </p>
+          </div>
+
+          <div class="workflow-step">
+            <div class="step-number">5</div>
+            <h4>Verify State</h4>
+            <p>
+              Run <code>flux get kustomizations</code> and
+              <code>flux get helmreleases -A</code> to verify success.
+            </p>
+          </div>
+
+          <div class="workflow-step">
+            <div class="step-number">6</div>
+            <h4>Clean Up</h4>
+            <p>
+              Once verified, remove original Helm releases with
+              <code>helm uninstall</code>
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="prereq-section">
+      <div class="container">
+        <h2 class="section-title">Prerequisites</h2>
+        <p class="section-subtitle">Required tools for running the migrator</p>
+
+        <div class="prereq-grid">
+          <div class="prereq-item">
+            <code>helm</code>
+            <p>Helm CLI</p>
+          </div>
+          <div class="prereq-item">
+            <code>kubectl</code>
+            <p>Kubernetes CLI</p>
+          </div>
+          <div class="prereq-item">
+            <code>jq</code>
+            <p>JSON processor</p>
+          </div>
+          <div class="prereq-item">
+            <code>yq</code>
+            <p>YAML processor</p>
+          </div>
+          <div class="prereq-item">
+            <code>claude</code><span class="optional-badge">optional</span>
+            <p>AI repository detection</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div class="container">
+        <div class="footer-links">
+          <a href="https://github.com/starburst997/helm-to-flux"
+            >GitHub Repository</a
+          >
+          <a href="https://github.com/starburst997/helm-to-flux/issues"
+            >Report Issues</a
+          >
+          <a href="https://github.com/starburst997/helm-to-flux#readme"
+            >Documentation</a
+          >
+        </div>
+        <p>
+          Built for teams transitioning to GitOps &bull; MIT License &bull;
+          <a href="https://github.com/starburst997">starburst997</a>
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>
