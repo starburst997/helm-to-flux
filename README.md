@@ -13,6 +13,9 @@ This project provides automated scripts to extract your current Helm deployments
 - 🎯 **Selective Migration**: Convert specific releases or bulk migrate all releases at once
 - 🔧 **Values Preservation**: Maintains your custom Helm values during migration
 - 📦 **Repository Generation**: Creates corresponding HelmRepository resources for each release
+- 🤖 **AI-Powered Repository Detection**: Uses Claude AI to find official Helm chart repositories when not detected from FluxCD
+- 📊 **Export & Compare**: Export all manifests and compare deployments before/after changes
+- 🔍 **Manifest Extraction**: Automatically extracts Kubernetes manifests when repository is unknown
 
 ## Prerequisites
 
@@ -20,6 +23,8 @@ This project provides automated scripts to extract your current Helm deployments
 - `helm` CLI installed and configured
 - `kubectl` access to your cluster
 - `jq` for JSON processing
+- `yq` for YAML processing (value comparison) - [Installation Guide](https://github.com/mikefarah/yq)
+- `claude` CLI (optional, for AI-powered repository detection) - [Installation Guide](https://docs.anthropic.com/en/docs/developer-tools/claude-cli)
 - FluxCD v2 installed in your cluster (or planning to install)
 
 ## Installation
@@ -27,7 +32,7 @@ This project provides automated scripts to extract your current Helm deployments
 ```bash
 git clone https://github.com/yourusername/helm-to-flux
 cd helm-to-flux
-chmod +x convert.sh all.sh
+chmod +x *.sh
 ```
 
 ## Usage
@@ -71,6 +76,84 @@ Example:
 ```
 
 This will automatically discover and convert all Helm releases across all namespaces.
+
+## Utility Scripts
+
+### Export All Manifests
+
+Export raw Kubernetes manifests for all Helm releases without converting to FluxCD format. Useful for backup, comparison, or debugging.
+
+```bash
+./export-all.sh [OUTPUT_DIR]
+```
+
+- `OUTPUT_DIR`: Output directory (default: `export`)
+
+Example:
+
+```bash
+./export-all.sh                    # Export to ./export/
+./export-all.sh backup-20250113    # Export to ./backup-20250113/
+```
+
+The script extracts all manifests from every Helm release and organizes them by namespace and release name:
+
+```
+export/
+├── cert-manager/
+│   └── cert-manager/
+│       ├── deployment-cert-manager.yaml
+│       ├── service-cert-manager.yaml
+│       └── ...
+└── ingress-nginx/
+    └── ingress-nginx/
+        ├── deployment-ingress-nginx-controller.yaml
+        └── ...
+```
+
+### Compare Exports
+
+Compare two export directories to identify differences between deployments. Perfect for:
+- Validating FluxCD deployments match original Helm deployments
+- Detecting configuration drift
+- Reviewing changes before/after upgrades
+
+```bash
+./compare-exports.sh <EXPORT_DIR_1> <EXPORT_DIR_2>
+```
+
+Example:
+
+```bash
+# Export before changes
+./export-all.sh export-before
+
+# Make changes to your cluster
+helm upgrade myapp ...
+
+# Export after changes
+./export-all.sh export-after
+
+# Compare
+./compare-exports.sh export-before export-after
+```
+
+The script provides:
+- List of identical releases
+- List of releases with differences (including number of changed files and lines)
+- Releases only in one export
+- Exit code 0 if identical, 1 if different
+
+Sample output:
+
+```
+[cert-manager/cert-manager] IDENTICAL
+[ingress-nginx/ingress-nginx] DIFFERENT (2 files, ~15 lines)
+
+SUMMARY
+Identical releases: 5
+Different releases: 1
+```
 
 ## Output Structure
 

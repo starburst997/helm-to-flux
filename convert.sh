@@ -239,160 +239,117 @@ fi
 # Get helm values, excluding the USER-SUPPLIED VALUES header
 USER_VALUES=$(helm get values $RELEASE -n $NAMESPACE | grep -v "^USER-SUPPLIED VALUES:$")
 
-# Get default values from the chart
-DEFAULT_VALUES=""
-if [ ! -z "$REPO_NAME" ] && [ ! -z "$CHART_NAME" ]; then
-    DEFAULT_VALUES=$(helm show values "$REPO_NAME/$CHART_NAME" --version "$CHART_VERSION" 2>/dev/null)
-fi
+# Filter out default values by comparing YAML structures
+VALUES=""
 
-# If we couldn't get default values from the repo, try without repo
-if [ -z "$DEFAULT_VALUES" ]; then
-    DEFAULT_VALUES=$(helm show values "$CHART_NAME" --version "$CHART_VERSION" 2>/dev/null || echo "")
-fi
+if [ -z "$USER_VALUES" ] || [ "$USER_VALUES" = "null" ]; then
+    # No user values at all
+    VALUES=""
+    echo "  No custom values found (using all defaults)"
+else
+    # We have user values - need to check if they're just defaults or actual customizations
+    if [ "$REPO_URL" != "UNKNOWN" ] && [ ! -z "$REPO_URL" ] && [ ! -z "$REPO_NAME" ] && [ ! -z "$CHART_NAME" ]; then
+        echo "  Comparing values with chart defaults to filter out redundant values..."
 
-# Compare values and extract only the differences
-if [ ! -z "$DEFAULT_VALUES" ] && [ ! -z "$USER_VALUES" ]; then
-    # Check if PyYAML is available
-    if python3 -c "import yaml" 2>/dev/null; then
-        # Create temporary files for comparison
-        TEMP_DEFAULT=$(mktemp)
-        TEMP_USER=$(mktemp)
-        TEMP_DIFF=$(mktemp)
-
-        echo "$DEFAULT_VALUES" > "$TEMP_DEFAULT"
-        echo "$USER_VALUES" > "$TEMP_USER"
-
-        # Use Python to compare YAML and extract only differences
-        python3 - <<'PYTHON_SCRIPT' "$TEMP_DEFAULT" "$TEMP_USER" "$TEMP_DIFF"
-import sys
-import yaml
-from collections.abc import Mapping
-
-def get_diff(default, user, path=""):
-    """Recursively find differences between default and user values."""
-    diff = {}
-
-    if not isinstance(user, Mapping):
-        # If user value is not a dict, return it if different from default
-        if user != default:
-            return user
-        return None
-
-    if not isinstance(default, Mapping):
-        # If default is not a dict but user is, return the entire user value
-        return user
-
-    # Both are dicts, compare keys
-    for key in user.keys():
-        if key not in default:
-            # Key doesn't exist in default, include it
-            diff[key] = user[key]
-        else:
-            # Key exists in both, recursively compare
-            subdiff = get_diff(default[key], user[key], f"{path}.{key}" if path else key)
-            if subdiff is not None:
-                diff[key] = subdiff
-
-    return diff if diff else None
-
-try:
-    with open(sys.argv[1], 'r') as f:
-        default_yaml = yaml.safe_load(f.read())
-    with open(sys.argv[2], 'r') as f:
-        user_yaml = yaml.safe_load(f.read())
-
-    if default_yaml is None:
-        default_yaml = {}
-    if user_yaml is None:
-        user_yaml = {}
-
-    diff = get_diff(default_yaml, user_yaml)
-
-    with open(sys.argv[3], 'w') as f:
-        if diff:
-            yaml.dump(diff, f, default_flow_style=False, sort_keys=False)
-        else:
-            f.write("")
-except Exception as e:
-    # If comparison fails, write the original user values
-    print(f"Warning: Failed to compare values: {e}", file=sys.stderr)
-    with open(sys.argv[3], 'w') as f:
-        with open(sys.argv[2], 'r') as uf:
-            f.write(uf.read())
-PYTHON_SCRIPT
-
-        VALUES=$(cat "$TEMP_DIFF")
-
-        # Cleanup temp files
-        rm -f "$TEMP_DEFAULT" "$TEMP_USER" "$TEMP_DIFF"
-    else
-        # PyYAML not available, try alternative methods
-        if command -v yq &> /dev/null; then
-            echo "Info: Using yq for value comparison (install python3-yaml for better results)"
-
-            # Create temporary files
-            TEMP_DEFAULT=$(mktemp)
-            TEMP_USER=$(mktemp)
-            TEMP_DIFF=$(mktemp)
-
-            echo "$DEFAULT_VALUES" > "$TEMP_DEFAULT"
-            echo "$USER_VALUES" > "$TEMP_USER"
-
-            # Use yq to convert to JSON and compare
-            yq eval -o=json "$TEMP_DEFAULT" > "${TEMP_DEFAULT}.json" 2>/dev/null
-            yq eval -o=json "$TEMP_USER" > "${TEMP_USER}.json" 2>/dev/null
-
-            if [ -s "${TEMP_DEFAULT}.json" ] && [ -s "${TEMP_USER}.json" ] && command -v jq &> /dev/null; then
-                # Use jq to find differences
-                jq -r --slurpfile default "${TEMP_DEFAULT}.json" --slurpfile user "${TEMP_USER}.json" '
-                    def diff($a; $b):
-                        if ($a | type) != ($b | type) then $b
-                        elif ($a | type) != "object" then
-                            if $a != $b then $b else empty end
-                        else
-                            reduce ($b | to_entries[]) as $item ({};
-                                if $a | has($item.key) then
-                                    if ($a[$item.key] != $item.value) then
-                                        .[$item.key] = diff($a[$item.key]; $item.value)
-                                    else . end
-                                else
-                                    .[$item.key] = $item.value
-                                end
-                            )
-                        end;
-                    diff($default[0]; $user[0])
-                ' > "${TEMP_DIFF}.json" 2>/dev/null
-
-                # Convert back to YAML
-                if [ -s "${TEMP_DIFF}.json" ]; then
-                    yq eval -P "${TEMP_DIFF}.json" > "$TEMP_DIFF" 2>/dev/null || echo "$USER_VALUES" > "$TEMP_DIFF"
-                else
-                    echo "" > "$TEMP_DIFF"
-                fi
-            else
-                # Fallback to simple yq comparison
-                echo "$USER_VALUES" > "$TEMP_DIFF"
-            fi
-
-            VALUES=$(cat "$TEMP_DIFF")
-
-            # Cleanup
-            rm -f "$TEMP_DEFAULT" "$TEMP_USER" "$TEMP_DIFF" "${TEMP_DEFAULT}.json" "${TEMP_USER}.json" "${TEMP_DIFF}.json"
-        elif command -v jq &> /dev/null; then
-            echo "Warning: PyYAML not installed. Install with 'pip3 install pyyaml' for better YAML comparison."
-            echo "Including all user values without filtering defaults."
+        # Check if yq and jq are available
+        if ! command -v yq &> /dev/null || ! command -v jq &> /dev/null; then
+            echo "  Warning: yq or jq not available, including all user values"
             VALUES="$USER_VALUES"
         else
-            echo "Warning: PyYAML not installed. Install with 'pip3 install pyyaml' for value comparison."
-            echo "Including all user values without filtering defaults."
-            VALUES="$USER_VALUES"
+            # Create temporary directory and files
+            TEMP_DIR=$(mktemp -d)
+            TEMP_DEFAULT_VALUES="$TEMP_DIR/default-values.yaml"
+            TEMP_USER_VALUES="$TEMP_DIR/user-values.yaml"
+
+            # Add helm repo temporarily for comparison
+            TEMP_REPO_NAME="temp-repo-$$-$(date +%s)"
+            helm repo add "$TEMP_REPO_NAME" "$REPO_URL" 2>/dev/null || true
+            helm repo update "$TEMP_REPO_NAME" 2>/dev/null || true
+
+            # Get default values from chart
+            if helm show values "$TEMP_REPO_NAME/$CHART_NAME" --version "$CHART_VERSION" > "$TEMP_DEFAULT_VALUES" 2>/dev/null; then
+                # Save user values
+                echo "$USER_VALUES" > "$TEMP_USER_VALUES"
+
+                # Convert YAML to JSON for comparison
+                yq eval -o=json "$TEMP_DEFAULT_VALUES" > "$TEMP_DIR/default.json" 2>/dev/null
+                yq eval -o=json "$TEMP_USER_VALUES" > "$TEMP_DIR/current.json" 2>/dev/null
+
+                # Use jq to recursively compare and extract only differences
+                jq --slurpfile defaults "$TEMP_DIR/default.json" --slurpfile current "$TEMP_DIR/current.json" -n '
+                    def remove_empty:
+                        if type == "object" then
+                            with_entries(select(.value != {} and .value != [] and .value != null and .value != ""))
+                            | with_entries(.value |= remove_empty)
+                            | if . == {} then empty else . end
+                        elif type == "array" then
+                            map(remove_empty)
+                            | if . == [] then empty else . end
+                        else
+                            .
+                        end;
+
+                    def diff($default; $current):
+                        if ($default | type) != ($current | type) then
+                            $current
+                        elif ($default | type) == "object" then
+                            reduce ($current | to_entries[]) as $item ({};
+                                if ($default | has($item.key)) then
+                                    if ($default[$item.key] == $item.value) then
+                                        .
+                                    else
+                                        (diff($default[$item.key]; $item.value)) as $subdiff |
+                                        if $subdiff != null and $subdiff != {} and $subdiff != [] then
+                                            . + {($item.key): $subdiff}
+                                        else
+                                            .
+                                        end
+                                    end
+                                else
+                                    . + {($item.key): $item.value}
+                                end
+                            )
+                        elif $default == $current then
+                            empty
+                        else
+                            $current
+                        end;
+
+                    diff($defaults[0]; $current[0]) | remove_empty // {}
+                ' > "$TEMP_DIR/diff.json" 2>/dev/null
+
+                # Convert back to YAML
+                if [ -s "$TEMP_DIR/diff.json" ]; then
+                    DIFF_CONTENT=$(cat "$TEMP_DIR/diff.json")
+                    if [ "$DIFF_CONTENT" = "{}" ] || [ "$DIFF_CONTENT" = "null" ]; then
+                        VALUES=""
+                        echo "  Values are identical to defaults - omitting values section"
+                    else
+                        VALUES=$(yq eval '.' -P -o=yaml "$TEMP_DIR/diff.json" 2>/dev/null)
+                        if [ -z "$VALUES" ]; then
+                            echo "  Warning: Could not extract differences, including all user values"
+                            VALUES="$USER_VALUES"
+                        else
+                            echo "  Found custom values that differ from defaults - including only differences"
+                        fi
+                    fi
+                else
+                    VALUES=""
+                    echo "  Values are identical to defaults - omitting values section"
+                fi
+            else
+                echo "  Warning: Could not fetch default values for comparison, including all user values"
+                VALUES="$USER_VALUES"
+            fi
+
+            # Cleanup
+            helm repo remove "$TEMP_REPO_NAME" 2>/dev/null || true
+            rm -rf "$TEMP_DIR"
         fi
-    fi
-else
-    # If we couldn't get default values, use all user values
-    VALUES="$USER_VALUES"
-    if [ ! -z "$USER_VALUES" ]; then
-        echo "Warning: Could not get default values for comparison, including all user values"
+    else
+        # Can't compare without repo info, include all user values
+        echo "  Warning: Cannot compare with defaults (no repository info), including all user values"
+        VALUES="$USER_VALUES"
     fi
 fi
 

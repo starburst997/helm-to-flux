@@ -5,3 +5,6 @@ output_*/
 clusters/
 clusters_*/
 *.txt
+export/
+export_*/
+test-temp
